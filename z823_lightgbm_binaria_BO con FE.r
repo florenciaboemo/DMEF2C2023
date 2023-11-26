@@ -32,7 +32,7 @@ options(error = function() {
 #  muy pronto esto se leera desde un archivo formato .yaml
 PARAM <- list()
 
-PARAM$experimento <- "HT8230"
+PARAM$experimento <- "HT8230_neg_bagging"
 
 PARAM$input$dataset <- "./datasets/competencia_03_julia.csv"
 
@@ -73,7 +73,6 @@ PARAM$lgb_basicos <- list(
 
   bagging_fraction = 1.0, # 0.0 < bagging_fraction <= 1.0
   pos_bagging_fraction = 1.0, # 0.0 < pos_bagging_fraction <= 1.0
-  neg_bagging_fraction = 1.0, # 0.0 < neg_bagging_fraction <= 1.0
   is_unbalance = FALSE, #
   scale_pos_weight = 1.0, # scale_pos_weight > 0.0
 
@@ -93,7 +92,8 @@ PARAM$bo_lgb <- makeParamSet(
   makeNumericParam("learning_rate", lower = 0.02, upper = 0.3),
   makeNumericParam("feature_fraction", lower = 0.01, upper = 1.0),
   makeIntegerParam("num_leaves", lower = 8L, upper = 1024L),
-  makeIntegerParam("min_data_in_leaf", lower = 100L, upper = 50000L)
+  makeIntegerParam("min_data_in_leaf", lower = 100L, upper = 50000L),
+  makeIntegerParam("neg_bagging_fraction", lower = 0.1, upper = 1.0)
 )
 
 # si usted es ambicioso, y tiene paciencia, podria subir este valor a 100
@@ -358,24 +358,33 @@ for (vcol in all_columns){
 }
 
 for (vcol in all_columns){
-  dataset[, paste("delta", vcol,2, sep=".") := get(vcol) - get(paste("lag", vcol,2, sep="."))]
+  dataset[, paste("delta", vcol,3, sep=".") := get(vcol) - get(paste("lag", vcol,3, sep="."))]
 }
 
+for (vcol in all_columns){
+  dataset[, paste("delta", vcol,6, sep=".") := get(vcol) - get(paste("lag", vcol,6, sep="."))]
+}
 
 #________________________________________________
 # FI: Ranking de cada cliente de cada mes en todas las features con 0 fijo - V2
 
-col_moneda  <- colnames(dataset)
-col_moneda  <- col_moneda[col_moneda %like% "^(m|Visa_m|Master_m|vm_m)"]
+# Assuming neg_bagging_fraction is part of col_moneda
+col_moneda <- colnames(dataset)
+col_moneda <- col_moneda[col_moneda %like% "^(m|Visa_m|Master_m|vm_m)"]
 
-for( campo in col_moneda)
-{
-  cat( campo, " " )
+for (campo in col_moneda) {
+  cat(campo, " ")
+  
   rankcolumns <- paste("rank", campo, sep=".")
-  dataset[ get(campo) ==0, (rankcolumns) := 0 ]
-  dataset[ get(campo) > 0, (rankcolumns) :=   frank(  get(campo), ties.method="dense")  / .N, by= foto_mes ]
-  dataset[ get(campo) < 0, (rankcolumns) :=  -frank( -get(campo), ties.method="dense")  / .N, by= foto_mes ]
-  dataset[ , (campo) := NULL ]
+  
+  # Assuming neg_bagging_fraction is a parameter that can vary
+  neg_bagging_fraction <- PARAM$bo_lgb$values[["neg_bagging_fraction"]]
+  
+  # Rank the variable using frank
+  dataset[get(campo) == 0, (rankcolumns) := 0]
+  dataset[get(campo) > 0, (rankcolumns) := frank(get(campo), ties.method = "dense") / neg_bagging_fraction, by = foto_mes]
+  dataset[get(campo) < 0, (rankcolumns) := -frank(-get(campo), ties.method = "dense") / neg_bagging_fraction, by = foto_mes]
+  dataset[, (campo) := NULL]
 }
 
 # Fin FE
